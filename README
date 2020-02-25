@@ -36,7 +36,7 @@ defined/used by the Samba project.
 The goal is to eventually support the full URL format, thus making URLs
 interchangable between Samba utilities and Libsmb2 but we are not there yet.
 
-smb://[<domain>;][<user>@]<server>/<share>[/path][?arg=val[&arg=val]*]
+smb://[<domain>;][<user>@]<server>[:<port>]/<share>[/path][?arg=val[&arg=val]*]
 
 <server> is either a hostname, an IPv4 or an IPv6 address.
 
@@ -52,44 +52,34 @@ Aruments supported by libsmb2 are :
                   3: Negotiate any version of SMB3
 		  2.02, 2.10, 3.00, 3.02 : negotiate a specific version.
 		  Default is to negotiate any SMB2 or SMB3 version.
+  seal          : Enable SMB3 encryption.
 
 NOTE:-
 	When using krb5cc mode use smb2_set_domain() and smb2_set_password() in the examples and applications
 
 Authentication
 ==============
-Libsmb2 provides two different modes of doing authentication. This needs
-to be selected at configure/compile time for the library.
-The first mode, which is the default, uses MIT Kerberos and an NTLMSSP mech
-plugin.
-This is the default mode and it provides full Active Directory integration
-and full authentication support.
+Libsmb2 provides has builtin support for NTLMSSP username/password
+authentication.
+It can also, optionally, be built with (MIT) Kerberos authentication.
 
-The second mode offers simple NTLMSSP authentication only using a
-small NTLMSSP module built into libsmb2.
-This mode can be selected by the --without-libkrb5 flag to configure
-before you compile the library.
-In this mode you will only have basic NTLMSSP, i.e. username+password,
-authentication, but it does not require tho link with MIT kerberos
-or the use of the mech plugin.
-This might be beneficial for limited systems of where it is not convenient
-to depend on a full blown kerberos library.
-
+Libsmb2 will try to build with Kerberos if these libraries are present.
+You can force a build without Kerberos support by using the flag
+--without-libkrb5 to configure. In this case only NTLMSSP authentication
+will be available.
 
 MIT KERBEROS
 ============
 Authentication is implemented using MIT Kerberos and it supports both KRB5
-for authentication against Active Directory as well as NTLMSSP for standalone
-windows servers.
+for authentication against Active Directory as well as NTLMSSP (optional).
 
-Using NTLMSSP authentication requies that you also install and configure
-the GSS-NTLMSSP mech plugin for kerberos.
-No other authentication mechanisms are planned.
-
-To build libsmb2 you will need to have MIT Kerberos as well as its development
-libraries installed.
-You will also need to build and install GSS-NTLMSSP from
-[https://github.com/simo5/gss-ntlmssp]
+MIT Kerberos can be configured to also provide NTLMSSP authentication,
+as an alternative to the builtin NTLMSSP implementation using an
+external mech plugin.
+To use this Kerberos/NTLMSSP module you will need to build and install
+GSS-NTLMSSP from [https://github.com/simo5/gss-ntlmssp]
+If you are uncertain you can skip this module and just use the NTLMSSP
+module that is provided by libsmb2.
 
 NTLM Authentication
 -------------------
@@ -103,7 +93,7 @@ to use libsmb2 for accessing a remote share.
 
 By default, NTLM authentication will use the username for the current process.
 This can be overridden by specifying a different username in the SMB URL :
-  smb://guest@server/share>?sec=ntlmssp
+  smb://guest@server/share?sec=ntlmssp
 
 KRB5 Authentication
 -------------------
@@ -118,14 +108,11 @@ The application needs to set the username, password and the domain fqdn in the c
 smb2_set_user(), smb2_set_password() and smb2_set_domain() respectively.
 
 
-BUILTIN NTLMSSP
-===============
-This is selected by the --without-libkrb5 library to configure.
-In this mode you no longer need to link to or depend on the MIT kerberos
-libraries and thus makes libsmb2 fully standalone.
+NTLM Credentials
+================
+This applies to both the builtin NTLMSSP implementation as well as when
+using Kerberos with the NTLMSSP mech plugin.
 
-NTLM Authentication
--------------------
 NTLM credentials are stored in a text file of the form :
 DOMAIN:USERNAME:PASSWORD
 with one line per username.
@@ -136,7 +123,7 @@ to use libsmb2 for accessing a remote share.
 
 By default, NTLM authentication will use the username for the current process.
 This can be overridden by specifying a different username in the SMB URL :
-  smb://guest@server/share>?sec=ntlmssp
+  smb://guest@server/share?sec=ntlmssp
 
 Alternatively you can provide the username and password from your application
 by calling :
@@ -146,9 +133,15 @@ by calling :
 
 SMB2/3 SIGNING
 ==============
-Signing is only supported with KRB5 or with the builtin ntlmssp support.
-Signing is not supported when the gss-ntlmssp mech plugin is used.
+Signing is supported with KRB5, with the builtin ntlmssp support and with
+gss-ntlmssp mech plugin.
 
+SMB3 Encryption
+===============
+Encryption is only supported with KRB5 or with the builtin ntlmssp support.
+Encryption is not supported when the gss-ntlmssp mech plugin is used.
+Encryption can be enabled either using the "seal" URL argument or by calling
+  smb3_set_seal(smb2, 1);
 
 BUILDING LIBSMB2
 ===============
@@ -192,3 +185,10 @@ If you want build libraries with Kerberos support, execute this script instead:
 
 	./build-with-krb5.sh
 
+
+ESP32
+-----
+
+libsmb2 is pre-configured for the ESP32 micro-controller. Simply
+clone this project in the 'components' directory of the ESP32 project
+and it will automatically be included in the build process.

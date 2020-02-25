@@ -55,17 +55,16 @@ smb2_encode_write_request(struct smb2_context *smb2,
         struct smb2_iovec *iov;
 
         len = SMB2_WRITE_REQUEST_SIZE & 0xfffffffe;
-        buf = malloc(len);
+        buf = calloc(len, sizeof(uint8_t));
         if (buf == NULL) {
                 smb2_set_error(smb2, "Failed to allocate write buffer");
                 return -1;
         }
-        memset(buf, 0, len);
 
         iov = smb2_add_iovector(smb2, &pdu->out, buf, len, free);
 
-        if (!smb2->supports_multi_credit && req->length > 60 * 1024) {
-                req->length = 60 * 1024;
+        if (!smb2->supports_multi_credit && req->length > 64 * 1024) {
+                req->length = 64 * 1024;
         }
         smb2_set_uint16(iov, 0, SMB2_WRITE_REQUEST_SIZE);
         smb2_set_uint16(iov, 2, SMB2_HEADER_SIZE + 48);
@@ -103,7 +102,7 @@ smb2_cmd_write_async(struct smb2_context *smb2,
                 return NULL;
         }
 
-        smb2_add_iovector(smb2, &pdu->out, req->buf,
+        smb2_add_iovector(smb2, &pdu->out, (uint8_t*)req->buf,
                           req->length, NULL);
         
         if (smb2_pad_to_64bit(smb2, &pdu->out) != 0) {

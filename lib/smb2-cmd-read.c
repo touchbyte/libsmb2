@@ -55,17 +55,16 @@ smb2_encode_read_request(struct smb2_context *smb2,
         struct smb2_iovec *iov;
 
         len = SMB2_READ_REQUEST_SIZE & 0xfffffffe;
-        buf = malloc(len);
+        buf = calloc(len, sizeof(uint8_t));
         if (buf == NULL) {
                 smb2_set_error(smb2, "Failed to allocate read buffer");
                 return -1;
         }
-        memset(buf, 0, len);
         
         iov = smb2_add_iovector(smb2, &pdu->out, buf, len, free);
 
-        if (!smb2->supports_multi_credit && req->length > 60 * 1024) {
-                req->length = 60 * 1024;
+        if (!smb2->supports_multi_credit && req->length > 64 * 1024) {
+                req->length = 64 * 1024;
                 req->minimum_count = 0;
         }
         smb2_set_uint16(iov, 0, SMB2_READ_REQUEST_SIZE);

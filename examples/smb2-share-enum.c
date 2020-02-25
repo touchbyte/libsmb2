@@ -32,7 +32,7 @@ int usage(void)
         fprintf(stderr, "Usage:\n"
                 "smb2-share-enum <smb2-url>\n\n"
                 "URL format: "
-                "smb://[<domain;][<username>@]<host>/\n");
+                "smb://[<domain;][<username>@]<host>[:<port>]/\n");
         exit(1);
 }
 
@@ -99,6 +99,9 @@ int main(int argc, char *argv[])
                 fprintf(stderr, "Failed to parse url: %s\n",
                         smb2_get_error(smb2));
                 exit(0);
+        }
+        if (url->user) {
+                smb2_set_user(smb2, url->user);
         }
 
         smb2_set_security_mode(smb2, SMB2_NEGOTIATE_SIGNING_ENABLED);

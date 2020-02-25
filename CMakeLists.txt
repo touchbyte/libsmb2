@@ -2,14 +2,14 @@ cmake_minimum_required(VERSION 3.2)
 
 project(libsmb2
         LANGUAGES C
-        VERSION 2.0.0)
+        VERSION 3.0.0)
 
 set(SOVERSION 1 CACHE STRING "" FORCE)
 
-set(INSTALL_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib" CACHE PATH "Installation directory for libraries")
+set(INSTALL_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib${LIB_SUFFIX}" CACHE PATH "Installation directory for libraries")
 set(INSTALL_INC_DIR "${CMAKE_INSTALL_PREFIX}/include" CACHE PATH "Installation directory for headers")
-set(INSTALL_PKGCONFIG_DIR "${CMAKE_INSTALL_PREFIX}/lib/pkgconfig" CACHE PATH "Installation directory for pkgconfig (.pc) files")
-set(INSTALL_CMAKE_DIR "${CMAKE_INSTALL_PREFIX}/lib/cmake/libsmb2" CACHE PATH "Installation directory for cmake (.cmake) files")
+set(INSTALL_PKGCONFIG_DIR "${CMAKE_INSTALL_PREFIX}/lib${LIB_SUFFIX}/pkgconfig" CACHE PATH "Installation directory for pkgconfig (.pc) files")
+set(INSTALL_CMAKE_DIR "${CMAKE_INSTALL_PREFIX}/lib${LIB_SUFFIX}/cmake/libsmb2" CACHE PATH "Installation directory for cmake (.cmake) files")
 
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 option(ENABLE_EXAMPLES "Build example programs" OFF)
@@ -38,7 +38,7 @@ set(core_DEPENDS ${GSSAPI_LIBRARIES} CACHE STRING "" FORCE)
 
 if(CMAKE_SYSTEM_NAME MATCHES Windows)
   list(APPEND CORE_LIBRARIES ws2_32.lib)
-  add_definitions(-DWIN32_LEAN_AND_MEAN -D_CRT_NONSTDC_NO_DEPRECATE -D_CRT_SECURE_NO_WARNINGS -DHAVE_SOCKADDR_IN6)
+  add_definitions(-DWIN32_LEAN_AND_MEAN -D_CRT_NONSTDC_NO_DEPRECATE -D_CRT_SECURE_NO_WARNINGS)
   include_directories(include/msvc)
 elseif(CMAKE_SYSTEM_NAME STREQUAL Solaris)
   find_library(SOCKET_LIBRARY socket)

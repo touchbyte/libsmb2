@@ -41,6 +41,7 @@
 #include "smb2.h"
 #include "libsmb2.h"
 #include "libsmb2-private.h"
+#include "smb3-seal.h"
 #include "smb2-signing.h"
 
 int
@@ -71,12 +72,11 @@ smb2_allocate_pdu(struct smb2_context *smb2, enum smb2_command command,
         struct smb2_header *hdr;
         char magic[4] = {0xFE, 'S', 'M', 'B'};
         
-        pdu = malloc(sizeof(struct smb2_pdu));
+        pdu = calloc(1, sizeof(struct smb2_pdu));
         if (pdu == NULL) {
                 smb2_set_error(smb2, "Failed to allocate pdu");
                 return NULL;
         }
-        memset(pdu, 0, sizeof(struct smb2_pdu));
 
         hdr = &pdu->header;
         
@@ -133,6 +133,16 @@ smb2_allocate_pdu(struct smb2_context *smb2, enum smb2_command command,
 
         smb2_add_iovector(smb2, &pdu->out, pdu->hdr, SMB2_HEADER_SIZE, NULL);
         
+        switch (command) {
+        case SMB2_NEGOTIATE:
+        case SMB2_SESSION_SETUP:
+                break;
+        default:
+                if (smb2->seal) {
+                        pdu->seal = 1;
+                }
+        }
+
         return pdu;
 }
 
@@ -172,6 +182,7 @@ smb2_free_pdu(struct smb2_context *smb2, struct smb2_pdu *pdu)
         smb2_free_iovector(smb2, &pdu->in);
 
         free(pdu->payload);
+        free(pdu->crypt);
         free(pdu);
 }
 
@@ -211,7 +222,8 @@ smb2_set_uint64(struct smb2_iovec *iov, int offset, uint64_t value)
         if (offset + sizeof(uint64_t) > iov->len) {
                 return -1;
         }
-        *(uint64_t *)(iov->buf + offset) = htole64(value);
+        value = htole64(value);
+        memcpy(iov->buf + offset, &value, 8);
         return 0;
 }
 
@@ -298,11 +310,16 @@ int
 smb2_decode_header(struct smb2_context *smb2, struct smb2_iovec *iov,
                    struct smb2_header *hdr)
 {
-        if (iov->len != SMB2_HEADER_SIZE) {
-                smb2_set_error(smb2, "io vector for header is wrong size");
+        static char smb2sign[4] = {0xFE, 'S', 'M', 'B'};
+
+        if (iov->len < SMB2_HEADER_SIZE) {
+                smb2_set_error(smb2, "io vector for header is too small");
                 return -1;
         }
-
+        if (memcmp(iov->buf, smb2sign, 4)) {
+                smb2_set_error(smb2, "bad SMB signature in header");
+                return -1;
+        }
         memcpy(&hdr->protocol_id, iov->buf, 4);
         smb2_get_uint16(iov, 4, &hdr->struct_size);
         smb2_get_uint16(iov, 6, &hdr->credit_charge);
@@ -330,6 +347,7 @@ static void
 smb2_add_to_outqueue(struct smb2_context *smb2, struct smb2_pdu *pdu)
 {
         SMB2_LIST_ADD_END(&smb2->outqueue, pdu);
+        smb2_change_events(smb2, smb2->fd, smb2_which_events(smb2));
 }
 
 void
@@ -340,7 +358,7 @@ smb2_queue_pdu(struct smb2_context *smb2, struct smb2_pdu *pdu)
         /* Update all the PDU headers in this chain */
         for (p = pdu; p; p = p->next_compound) {
                 smb2_encode_header(smb2, &p->out.iov[0], &p->header);
-                if (smb2->signing_required) {
+                if (smb2->sign) {
                         if (smb2_pdu_add_signature(smb2, p) < 0) {
                                 smb2_set_error(smb2, "Failure to add "
                                                "signature. %s",
@@ -348,6 +366,8 @@ smb2_queue_pdu(struct smb2_context *smb2, struct smb2_pdu *pdu)
                         }
                 }
         }
+
+        smb3_encrypt_pdu(smb2, pdu);
 
         smb2_add_to_outqueue(smb2, pdu);
 }

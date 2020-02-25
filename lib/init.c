@@ -44,6 +44,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <sys/socket.h>
+#include <time.h>
 
 #include "smb2.h"
 #include "libsmb2.h"
@@ -52,10 +53,27 @@
 #define MAX_URL_SIZE 256
 
 #ifdef _MSC_VER
-#define getlogin() "Guest"
+#include <errno.h>
+#define getlogin_r(a,b) ENXIO
+#define srandom srand
 #define random rand
 #define getpid GetCurrentProcessId
 #endif // _MSC_VER
+
+#ifdef ESP_PLATFORM
+#include <errno.h>
+#include <esp_system.h>
+#define random esp_random
+#define getlogin_r(a,b) ENXIO
+#endif
+
+#ifdef __ANDROID__
+#include <errno.h>
+// getlogin_r() was added in API 28
+#if __ANDROID_API__ < 28
+#define getlogin_r(a,b) ENXIO
+#endif
+#endif // __ANDROID__
 
 static int
 smb2_parse_args(struct smb2_context *smb2, const char *args)
@@ -63,17 +81,27 @@ smb2_parse_args(struct smb2_context *smb2, const char *args)
         while (args && *args != 0) {
                 char *next, *value;
 
-		next = strchr(args, '&');
+                next = strchr(args, '&');
                 if (next) {
                         *(next++) = '\0';
                 }
 
-		value = strchr(args, '=');
+                value = strchr(args, '=');
                 if (value) {
                         *(value++) = '\0';
                 }
 
-                if (!strcmp(args, "sec")) {
+                if (!strcmp(args, "seal")) {
+                        smb2->seal = 1;
+                } else if (!strcmp(args, "ndr32")) {
+                        smb2->ndr = 1;
+                } else if (!strcmp(args, "ndr64")) {
+                        smb2->ndr = 2;
+                } else if (!strcmp(args, "le")) {
+                        smb2->endianess = 0;
+                } else if (!strcmp(args, "be")) {
+                        smb2->endianess = 1;
+                } else if (!strcmp(args, "sec")) {
                         if(!strcmp(value, "krb5")) {
                                 smb2->sec = SMB2_SEC_KRB5;
                         } else if(!strcmp(value, "krb5cc")) {
@@ -112,6 +140,21 @@ smb2_parse_args(struct smb2_context *smb2, const char *args)
                 args = next;
         }
 
+        if (smb2->seal) {
+                switch (smb2->version) {
+                case SMB2_VERSION_ANY:
+                        smb2->version = SMB2_VERSION_ANY3;
+                        break;
+                case SMB2_VERSION_ANY3:
+                case SMB2_VERSION_0300:
+                case SMB2_VERSION_0302:
+                        break;
+                default:
+                        smb2_set_error(smb2, "Can only use seal with SMB3");
+                        return -1;
+                }
+        }
+
         return 0;
 }
 
@@ -129,7 +172,7 @@ struct smb2_url *smb2_parse_url(struct smb2_context *smb2, const char *url)
                 smb2_set_error(smb2, "URL is too long");
                 return NULL;
         }
-	strncpy(str, url + 6, MAX_URL_SIZE);
+        strncpy(str, url + 6, MAX_URL_SIZE);
 
         args = strchr(str, '?');
         if (args) {
@@ -139,12 +182,11 @@ struct smb2_url *smb2_parse_url(struct smb2_context *smb2, const char *url)
                 }
         }
 
-        u = malloc(sizeof(struct smb2_url));
+        u = calloc(1, sizeof(struct smb2_url));
         if (u == NULL) {
                 smb2_set_error(smb2, "Failed to allocate smb2_url");
                 return NULL;
         }
-        memset(u, 0, sizeof(struct smb2_url));
 
         ptr = str;
 
@@ -159,7 +201,7 @@ struct smb2_url *smb2_parse_url(struct smb2_context *smb2, const char *url)
                 *(tmp++) = '\0';
                 u->user = strdup(ptr);
                 ptr = tmp;
-	}
+        }
         /* server */
         if ((tmp = strchr(ptr, '/')) != NULL) {
                 *(tmp++) = '\0';
@@ -197,18 +239,23 @@ void smb2_destroy_url(struct smb2_url *url)
         free(url);
 }
 
+
 struct smb2_context *smb2_init_context(void)
 {
         struct smb2_context *smb2;
-        int i;
+        char buf[1024];
+        int i, ret;
+        static int ctr;
 
-        smb2 = malloc(sizeof(struct smb2_context));
+        srandom(time(NULL) | getpid() | ctr++);
+
+        smb2 = calloc(1, sizeof(struct smb2_context));
         if (smb2 == NULL) {
                 return NULL;
         }
-        memset(smb2, 0, sizeof(struct smb2_context));
 
-        smb2_set_user(smb2, getlogin());
+        ret = getlogin_r(buf, sizeof(buf));
+        smb2_set_user(smb2, ret == 0 ? buf : "Guest");
         smb2->fd = -1;
         smb2->sec = SMB2_SEC_UNDEFINED;
         smb2->version = SMB2_VERSION_ANY;
@@ -220,8 +267,6 @@ struct smb2_context *smb2_init_context(void)
         snprintf(smb2->client_guid, 16, "libsmb2-%d", getpid());
 
         smb2->session_key = NULL;
-        smb2->signing_required = 0;
-        memset(smb2->signing_key, 0, SMB2_KEY_SIZE);
 
         return smb2;
 }
@@ -233,6 +278,9 @@ void smb2_destroy_context(struct smb2_context *smb2)
         }
 
         if (smb2->fd != -1) {
+                if (smb2->change_fd) {
+                        smb2->change_fd(smb2, smb2->fd, SMB2_DEL_FD);
+                }
                 close(smb2->fd);
                 smb2->fd = -1;
         }
@@ -241,18 +289,28 @@ void smb2_destroy_context(struct smb2_context *smb2)
                 struct smb2_pdu *pdu = smb2->outqueue;
 
                 smb2->outqueue = pdu->next;
+                pdu->cb(smb2, SMB2_STATUS_CANCELLED, NULL, pdu->cb_data);
                 smb2_free_pdu(smb2, pdu);
         }
         while (smb2->waitqueue) {
                 struct smb2_pdu *pdu = smb2->waitqueue;
 
                 smb2->waitqueue = pdu->next;
+                pdu->cb(smb2, SMB2_STATUS_CANCELLED, NULL, pdu->cb_data);
                 smb2_free_pdu(smb2, pdu);
         }
         smb2_free_iovector(smb2, &smb2->in);
         if (smb2->pdu) {
                 smb2_free_pdu(smb2, smb2->pdu);
                 smb2->pdu = NULL;
+        }
+
+        if (smb2->fhs) {
+                smb2_free_all_fhs(smb2);
+        }
+
+        if (smb2->dirs) {
+                smb2_free_all_dirs(smb2);
         }
 
         free(smb2->session_key);
@@ -264,6 +322,7 @@ void smb2_destroy_context(struct smb2_context *smb2)
         free(discard_const(smb2->password));
         free(discard_const(smb2->domain));
         free(discard_const(smb2->workstation));
+        free(smb2->enc);
 
         free(smb2);
 }
@@ -271,7 +330,7 @@ void smb2_destroy_context(struct smb2_context *smb2)
 void smb2_free_iovector(struct smb2_context *smb2, struct smb2_io_vectors *v)
 {
         int i;
-        
+
         for (i = 0; i < v->niov; i++) {
                 if (v->iov[i].free) {
                         v->iov[i].free(v->iov[i].buf);
@@ -300,25 +359,25 @@ struct smb2_iovec *smb2_add_iovector(struct smb2_context *smb2,
 
 void smb2_set_error(struct smb2_context *smb2, const char *error_string, ...)
 {
-	va_list ap;
-	char errstr[MAX_ERROR_SIZE] = {0};
+        va_list ap;
+        char errstr[MAX_ERROR_SIZE] = {0};
 
-	va_start(ap, error_string);
-	if (vsnprintf(errstr, MAX_ERROR_SIZE, error_string, ap) < 0) {
-		strncpy(errstr, "could not format error string!",
+        va_start(ap, error_string);
+        if (vsnprintf(errstr, MAX_ERROR_SIZE, error_string, ap) < 0) {
+                strncpy(errstr, "could not format error string!",
                         MAX_ERROR_SIZE);
-	}
-	va_end(ap);
-	if (smb2 != NULL) {
-		strncpy(smb2->error_string, errstr, MAX_ERROR_SIZE);
-	}
+        }
+        va_end(ap);
+        if (smb2 != NULL) {
+                strncpy(smb2->error_string, errstr, MAX_ERROR_SIZE);
+        }
 }
 
 const char *smb2_get_error(struct smb2_context *smb2)
 {
-	return smb2 ? smb2->error_string : "";
+        return smb2 ? smb2->error_string : "";
 }
-        
+
 const char *smb2_get_client_guid(struct smb2_context *smb2)
 {
         return smb2->client_guid;
@@ -359,6 +418,12 @@ static void smb2_set_password_from_file(struct smb2_context *smb2)
 #ifdef _MSC_UWP
         free(name);
 #endif
+        if (!fh) {
+            return;
+        }
+
+        smb2_set_password(smb2, NULL);
+
         while (!feof(fh)) {
                 if (fgets(buf, 256, fh) == NULL) {
                         break;
@@ -403,6 +468,10 @@ void smb2_set_user(struct smb2_context *smb2, const char *user)
 {
         if (smb2->user) {
                 free(discard_const(smb2->user));
+                smb2->user = NULL;
+        }
+        if (user == NULL) {
+                return;
         }
         smb2->user = strdup(user);
         smb2_set_password_from_file(smb2);
@@ -412,6 +481,10 @@ void smb2_set_password(struct smb2_context *smb2, const char *password)
 {
         if (smb2->password) {
                 free(discard_const(smb2->password));
+                smb2->password = NULL;
+        }
+        if (password == NULL) {
+                return;
         }
         smb2->password = strdup(password);
 }
@@ -430,4 +503,14 @@ void smb2_set_workstation(struct smb2_context *smb2, const char *workstation)
                 free(discard_const(smb2->workstation));
         }
         smb2->workstation = strdup(workstation);
+}
+
+void smb2_set_seal(struct smb2_context *smb2, int val)
+{
+        smb2->seal = val;
+}
+
+void smb2_set_authentication(struct smb2_context *smb2, int val)
+{
+        smb2->sec = val;
 }

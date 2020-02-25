@@ -33,7 +33,7 @@ int usage(void)
         fprintf(stderr, "Usage:\n"
                 "smb2-stat-sync <smb2-url>\n\n"
                 "URL format: "
-                "smb://[<domain;][<username>@]<host>/<share>/<path>\n");
+                "smb://[<domain;][<username>@]<host>>[:<port>]/<share>/<path>\n");
         exit(1);
 }
 
@@ -92,6 +92,8 @@ int main(int argc, char *argv[])
 	printf("Mtime:%s", asctime(localtime(&t)));
         t = (time_t)st.smb2_ctime;
 	printf("Ctime:%s", asctime(localtime(&t)));
+        t = (time_t)st.smb2_btime;
+    printf("Btime:%s", asctime(localtime(&t)));
 
         smb2_disconnect_share(smb2);
         smb2_destroy_url(url);

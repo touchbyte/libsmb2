@@ -32,7 +32,15 @@
 #endif
 
 #include <errno.h>
+#ifdef ESP_PLATFORM
+#include <sys/poll.h>
+#else
 #include <poll.h>
+#endif
+
+#ifdef HAVE_STRING_H
+#include <string.h>
+#endif
 
 #include "smb2.h"
 #include "libsmb2.h"
@@ -257,6 +265,10 @@ static void generic_status_cb(struct smb2_context *smb2, int status,
 {
         struct sync_cb_data *cb_data = private_data;
 
+        if (status == SMB2_STATUS_CANCELLED) {
+                return;
+        }
+
         cb_data->is_finished = 1;
         cb_data->status = status;
 }
@@ -282,7 +294,7 @@ int smb2_pread(struct smb2_context *smb2, struct smb2fh *fh,
 }
 
 int smb2_pwrite(struct smb2_context *smb2, struct smb2fh *fh,
-                uint8_t *buf, uint32_t count, uint64_t offset)
+                const uint8_t *buf, uint32_t count, uint64_t offset)
 {
         struct sync_cb_data cb_data;
 
@@ -322,7 +334,7 @@ int smb2_read(struct smb2_context *smb2, struct smb2fh *fh,
 }
 
 int smb2_write(struct smb2_context *smb2, struct smb2fh *fh,
-               uint8_t *buf, uint32_t count)
+               const uint8_t *buf, uint32_t count)
 {
         struct sync_cb_data cb_data;
 
@@ -508,6 +520,47 @@ int smb2_ftruncate(struct smb2_context *smb2, struct smb2fh *fh,
 	if (smb2_ftruncate_async(smb2, fh, length,
                                  generic_status_cb, &cb_data) != 0) {
 		smb2_set_error(smb2, "smb2_ftruncate_async failed. %s",
+                               smb2_get_error(smb2));
+		return -1;
+	}
+
+	if (wait_for_reply(smb2, &cb_data) < 0) {
+                return -1;
+        }
+
+	return cb_data.status;
+}
+
+struct readlink_cb_data {
+	char *buf;
+        int len;
+};
+
+static void readlink_cb(struct smb2_context *smb2, int status,
+                    void *command_data, void *private_data)
+{
+        struct sync_cb_data *cb_data = private_data;
+        struct readlink_cb_data *rl_data = cb_data->ptr;
+        
+        cb_data->is_finished = 1;
+        cb_data->status = status;
+        strncpy(rl_data->buf, command_data, rl_data->len);
+}
+
+int smb2_readlink(struct smb2_context *smb2, const char *path,
+                  char *buf, uint32_t len)
+{
+        struct sync_cb_data cb_data;
+        struct readlink_cb_data rl_data;
+
+        rl_data.buf = buf;
+        rl_data.len = len;
+
+	cb_data.is_finished = 0;
+        cb_data.ptr = &rl_data;
+
+	if (smb2_readlink_async(smb2, path, readlink_cb, &cb_data) != 0) {
+		smb2_set_error(smb2, "smb2_readlink_async failed. %s",
                                smb2_get_error(smb2));
 		return -1;
 	}

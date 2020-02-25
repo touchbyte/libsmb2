@@ -57,12 +57,11 @@ smb2_encode_negotiate_request(struct smb2_context *smb2,
         len = SMB2_NEGOTIATE_REQUEST_SIZE +
                 req->dialect_count * sizeof(uint16_t);
         len = PAD_TO_32BIT(len);
-        buf = malloc(len);
+        buf = calloc(len, sizeof(uint8_t));
         if (buf == NULL) {
                 smb2_set_error(smb2, "Failed to allocate negotiate buffer");
                 return -1;
         }
-        memset(buf, 0, len);
         
         iov = smb2_add_iovector(smb2, &pdu->out, buf, len, free);
         
@@ -146,9 +145,7 @@ smb2_process_negotiate_fixed(struct smb2_context *smb2,
         smb2_get_uint16(iov, 58, &rep->security_buffer_length);
 
         if (rep->security_buffer_length == 0) {
-                smb2_set_error(smb2, "No security buffer in Negotiate "
-                               "Protocol response");
-                return -1;
+                return 0;
         }
         if (rep->security_buffer_offset < SMB2_HEADER_SIZE +
             (SMB2_NEGOTIATE_REPLY_SIZE & 0xfffe)) {

@@ -42,6 +42,8 @@
 #include "sha.h"
 #include "sha-private.h"
 
+#if defined(USE_SHA384_SHA512) && USE_SHA384_SHA512
+
 #ifdef USE_32BIT_ONLY
 /*
  * Define 64-bit arithmetic in terms of 32-bit arithmetic.
@@ -1056,3 +1058,5 @@ SHA384_512ResultN (SHA512Context * context,
 
   return shaSuccess;
 }
+
+#endif

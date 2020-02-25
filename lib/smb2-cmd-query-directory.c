@@ -60,7 +60,8 @@ smb2_decode_fileidfulldirectoryinformation(
          * vector.
          */
         smb2_get_uint32(vec, 60, &name_len);
-        if (80 + name_len > vec->len) {
+        if (name_len > 80 + name_len ||
+            80 + name_len > vec->len) {
                 smb2_set_error(smb2, "Malformed name in query.\n");
                 return -1;
         }
@@ -101,12 +102,11 @@ smb2_encode_query_directory_request(struct smb2_context *smb2,
         struct smb2_iovec *iov;
 
         len = SMB2_QUERY_DIRECTORY_REQUEST_SIZE & 0xfffffffe;
-        buf = malloc(len);
+        buf = calloc(len, sizeof(uint8_t));
         if (buf == NULL) {
                 smb2_set_error(smb2, "Failed to allocate query buffer");
                 return -1;
         }
-        memset(buf, 0, len);
 
         iov = smb2_add_iovector(smb2, &pdu->out, buf, len, free);
 

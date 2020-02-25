@@ -1,4 +1,7 @@
 /* -*-  mode:c; tab-width:8; c-basic-offset:8; indent-tabs-mode:nil;  -*- */
+#ifndef _GSSAPI_WRAPPER_H_
+#define _GSSAPI_WRAPPER_H_
+
 /*
    Copyright (C) 2018 by Ronnie Sahlberg <ronniesahlberg@gmail.com>
 
@@ -19,14 +22,9 @@
 #include "config.h"
 #endif
 
-#ifndef HAVE_LIBKRB5
-
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
-
-#ifndef _GSSAPI_WRAPPER_H_
-#define _GSSAPI_WRAPPER_H_
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,7 +40,8 @@ ntlmssp_init_context(const char *user,
                      const char *client_challenge);
 
 int
-ntlmssp_generate_blob(struct smb2_context *smb2, struct auth_data *auth_data,
+ntlmssp_generate_blob(struct smb2_context *smb2, time_t t,
+                      struct auth_data *auth_data,
                       unsigned char *input_buf, int input_len,
                       unsigned char **output_buf, uint16_t *output_len);
 
@@ -56,5 +55,3 @@ int ntlmssp_get_session_key(struct auth_data *auth, uint8_t **key, uint8_t *key_
 #endif
 
 #endif /* _GSSAPI_WRAPPER_H_ */
-
-#endif /* HAVE_LIBKRB5 */

@@ -45,6 +45,7 @@ typedef void (*smb2_command_cb)(struct smb2_context *smb2, int status,
 /* Stat structure */
 #define SMB2_TYPE_FILE      0x00000000
 #define SMB2_TYPE_DIRECTORY 0x00000001
+#define SMB2_TYPE_LINK      0x00000002
 struct smb2_stat_64 {
         uint32_t smb2_type;
         uint32_t smb2_nlink;
@@ -56,6 +57,8 @@ struct smb2_stat_64 {
 	uint64_t smb2_mtime_nsec;
 	uint64_t smb2_ctime;
 	uint64_t smb2_ctime_nsec;
+    uint64_t smb2_btime;
+    uint64_t smb2_btime_nsec;
 };
 
 struct smb2_statvfs {
@@ -87,19 +90,39 @@ typedef int t_socket;
 /*
  * Create an SMB2 context.
  * Function returns
- *  NULL : Failed to create a context.
- *  *nfs : A pointer to an smb2 context.
+ *  NULL  : Failed to create a context.
+ *  *smb2 : A pointer to an smb2 context.
  */
 struct smb2_context *smb2_init_context(void);
 
 /*
  * Destroy an smb2 context.
+ *
+ * Any open "struct smb2fh" will automatically be freed. You can not reference
+ * any "struct smb2fh" after the context is destroyed.
+ * Any open "struct smb2dir" will automatically be freed. You can not reference
+ * any "struct smb2dir" after the context is destroyed.
+ * Any pending async commands will be aborted with -ECONNRESET.
  */
 void smb2_destroy_context(struct smb2_context *smb2);
 
 /*
- * The following three functions are used to integrate libsmb2 in an event
+ * EVENT SYSTEM INTEGRATION
+ * ========================
+ * The following functions are used to integrate libsmb2 in an event
  * system.
+ *
+ * The simplest way is by using smb2_get_fd() and smb2_which_events()
+ * in every loop of the event system to detect which fd to use (it can change)
+ * and which events should be waited for.
+ * This is very simple to use but has the drawback of the overhead having to
+ * call these two functions for every loop.
+ *
+ * This is suitable for trivial apps where you roll your event system
+ * using select() or poll().
+ *
+ * See for example smb2-cat-async.c for an example on how to use these
+ * two functions in an event loop.
  */
 /*
  * Returns the file descriptor that libsmb2 uses.
@@ -109,6 +132,27 @@ t_socket smb2_get_fd(struct smb2_context *smb2);
  * Returns which events that we need to poll for for the smb2 file descriptor.
  */
 int smb2_which_events(struct smb2_context *smb2);
+/*
+ * A much more scalable way to use smb2_fd_event_callbacks() to register
+ * callbacks for libsmb2 to call anytime a filedescriptor is changed or when
+ * the  events we are waiting for changes.
+ * This way libsmb2 will do callbacks back into the application to inform
+ * when fd or events change.
+ *
+ * This is suitable when you want to plug libsmb2 into a more sophisticated
+ * eventsystem or if you use epoll() or similar.
+ *
+ * See for smb2-ls-async.c for a trivial example of using these callbacks.
+ */
+#define SMB2_ADD_FD 0
+#define SMB2_DEL_FD 1
+typedef void (*smb2_change_fd_cb)(struct smb2_context *smb2, int fd, int cmd);
+typedef void (*smb2_change_events_cb)(struct smb2_context *smb2, int fd,
+                                      int events);
+void smb2_fd_event_callbacks(struct smb2_context *smb2,
+                             smb2_change_fd_cb change_fd,
+                             smb2_change_events_cb change_events);
+
 /*
  * Called to process the events when events become available for the smb2
  * file descriptor.
@@ -128,6 +172,21 @@ int smb2_service(struct smb2_context *smb2, int revents);
  * Default is 0.
  */
 void smb2_set_security_mode(struct smb2_context *smb2, uint16_t security_mode);
+
+/*
+ * Set whether smb3 encryption should be used or not.
+ * 0  : disable encryption. This is the default.
+ * !0 : enable encryption.
+ */
+void smb2_set_seal(struct smb2_context *smb2, int val);
+
+/*
+ * Set authentication method.
+ * SMB2_SEC_UNDEFINED (use KRB if available or NTLM if not)
+ * SMB2_SEC_NTLMSSP
+ * SMB2_SEC_KRB5
+ */
+void smb2_set_authentication(struct smb2_context *smb2, int val);
 
 /*
  * Set the username that we will try to authenticate as.
@@ -168,7 +227,7 @@ const char *smb2_get_client_guid(struct smb2_context *smb2);
  * status can be either of :
  *    0     : Connection was successful. Command_data is NULL.
  *
- *   <0     : Failed to establish the connection. Command_data is NULL.
+ *   -errno : Failed to establish the connection. Command_data is NULL.
  */
 int smb2_connect_async(struct smb2_context *smb2, const char *server,
                        smb2_command_cb cb, void *cb_data);
@@ -254,8 +313,10 @@ int nterror_to_errno(uint32_t status);
 
 /*
  * This function is used to parse an SMB2 URL into as smb2_url structure.
- * SMB2 URL format :
- * smb2://[<domain;][<username>@]<host>/<share>/<path>
+ * SMB2 URL format:
+ *   smb2://[<domain;][<username>@]<server>/<share>/<path>
+ * where <server> has the format:
+ *   <host>[:<port>].
  *
  * Function will return a pointer to an iscsi smb2 structure if successful,
  * or it will return NULL and set smb2_get_error() accordingly if there was
@@ -280,7 +341,7 @@ struct smb2_pdu;
  * ...
  * *, smb2_queue_pdu(smb2, pdu);
  *
- * See libnfs.c and smb2-raw-stat-async.c for examples on how to use
+ * See libsmb2.c and smb2-raw-stat-async.c for examples on how to use
  * this interface.
  */
 void smb2_add_compound_pdu(struct smb2_context *smb2,
@@ -503,9 +564,9 @@ int smb2_pread(struct smb2_context *smb2, struct smb2fh *fh,
  * -errno : An error occured.
  *
  * Command_data is always NULL.
- */       
+ */
 int smb2_pwrite_async(struct smb2_context *smb2, struct smb2fh *fh,
-                      uint8_t *buf, uint32_t count, uint64_t offset,
+                      const uint8_t *buf, uint32_t count, uint64_t offset,
                       smb2_command_cb cb, void *cb_data);
 
 /*
@@ -514,7 +575,7 @@ int smb2_pwrite_async(struct smb2_context *smb2, struct smb2fh *fh,
  * server supports.
  */
 int smb2_pwrite(struct smb2_context *smb2, struct smb2fh *fh,
-                uint8_t *buf, uint32_t count, uint64_t offset);
+                const uint8_t *buf, uint32_t count, uint64_t offset);
 
 /*
  * READ
@@ -561,14 +622,14 @@ int smb2_read(struct smb2_context *smb2, struct smb2fh *fh,
  * Command_data is always NULL.
  */
 int smb2_write_async(struct smb2_context *smb2, struct smb2fh *fh,
-                     uint8_t *buf, uint32_t count,
+                     const uint8_t *buf, uint32_t count,
                      smb2_command_cb cb, void *cb_data);
 
 /*
  * Sync write()
  */
 int smb2_write(struct smb2_context *smb2, struct smb2fh *fh,
-               uint8_t *buf, uint32_t count);
+               const uint8_t *buf, uint32_t count);
 
 /*
  * Sync lseek()
@@ -792,6 +853,29 @@ int smb2_ftruncate(struct smb2_context *smb2, struct smb2fh *fh,
 
 
 /*
+ * READLINK
+ */
+/*
+ * Async readlink()
+ *
+ * Returns
+ *  0     : The operation was initiated. The link content will be
+ *          reported through the callback function.
+ * -errno : There was an error. The callback function will not be invoked.
+ *
+ * When the callback is invoked, status indicates the result:
+ *      0 : Success. Command_data is the link content.
+ * -errno : An error occured.
+ */
+int smb2_readlink_async(struct smb2_context *smb2, const char *path,
+                        smb2_command_cb cb, void *cb_data);
+
+/*
+ * Sync readlink()
+ */
+int smb2_readlink(struct smb2_context *smb2, const char *path, char *buf, uint32_t bufsiz);
+
+/*
  * Async echo()
  *
  * Returns
@@ -815,9 +899,6 @@ int smb2_echo_async(struct smb2_context *smb2,
  */
 int smb2_echo(struct smb2_context *smb2);
 
-#ifdef __cplusplus
-}
-#endif
 
 /* Low 2 bits desctibe the type */
 #define SHARE_TYPE_DISKTREE  0
@@ -880,4 +961,7 @@ struct srvsvc_netshareenumall_rep {
 int smb2_share_enum_async(struct smb2_context *smb2,
                           smb2_command_cb cb, void *cb_data);
 
+#ifdef __cplusplus
+}
+#endif
 #endif /* !_LIBSMB2_H_ */
