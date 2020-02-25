@@ -81,3 +81,4 @@ smb2_echo
 smb2_echo_async
 smb2_cmd_ioctl_async
 smb2_fsync_async
+smb2_set_error
