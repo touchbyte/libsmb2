@@ -21,12 +21,12 @@ make
 make install
 make clean
 cd ~/Desktop/libsmb2/iphonesimulator-13.2/x86_64/lib
-install_name_tool -id @rpath/libsmb2.framework/libsmb2 libsmb2.2.dylib
+install_name_tool -id @rpath/libsmb2.framework/libsmb2 libsmb2.3.dylib
 cd ~/Desktop/libsmb2/iphonesimulator-13.2/i386/lib
-install_name_tool -id @rpath/libsmb2.framework/libsmb2 libsmb2.2.dylib
+install_name_tool -id @rpath/libsmb2.framework/libsmb2 libsmb2.3.dylib
 cd ~/Desktop/libsmb2/iphoneos-13.2/arm64/lib
-install_name_tool -id @rpath/libsmb2.framework/libsmb2 libsmb2.2.dylib
+install_name_tool -id @rpath/libsmb2.framework/libsmb2 libsmb2.3.dylib
 cd ~/Desktop/libsmb2/iphoneos-13.2/armv7/lib
-install_name_tool -id @rpath/libsmb2.framework/libsmb2 libsmb2.2.dylib
+install_name_tool -id @rpath/libsmb2.framework/libsmb2 libsmb2.3.dylib
 cd ~/Desktop/libsmb2/
-lipo -create iphonesimulator-13.2/x86_64/lib/libsmb2.2.dylib iphonesimulator-13.2/i386/lib/libsmb2.2.dylib iphoneos-13.2/arm64/lib/libsmb2.2.dylib iphoneos-13.2/armv7/lib/libsmb2.2.dylib -output libsmb2.2.dylib
+lipo -create iphonesimulator-13.2/x86_64/lib/libsmb2.3.dylib iphonesimulator-13.2/i386/lib/libsmb2.3.dylib iphoneos-13.2/arm64/lib/libsmb2.3.dylib iphoneos-13.2/armv7/lib/libsmb2.3.dylib -output libsmb2.3.dylib
