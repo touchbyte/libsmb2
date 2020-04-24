@@ -71,17 +71,12 @@ struct dcerpc_deferred_pointer {
 
 #define MAX_DEFERRED_PTR 1024
 
-#define SRVSVC_UUID    0x4b324fc8, 0x1670, 0x01d3, 0x12785a47bf6ee188
 #define NDR32_UUID     0x8a885d04, 0x1ceb, 0x11c9, 0x9fe808002b104860
 #define NDR64_UUID     0x71710533, 0xbeba, 0x4937, 0x8319b5dbef9ccc36
 /*
  * NDR64 is only supported for LITTLE_ENDIAN encodings:
  * https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-rpce/b1af93c7-f988-4a1a-ac74-063179942f32
  */
-
-p_syntax_id_t srvsvc_interface = {
-        {SRVSVC_UUID}, 3, 0
-};
 
 p_syntax_id_t ndr32_syntax = {
         {NDR32_UUID}, 2
@@ -516,6 +511,8 @@ dcerpc_decode_3264(struct dcerpc_context *ctx, struct dcerpc_pdu *pdu,
         return offset;
 }
 
+#define RPTR 0x5270747272747052
+#define UPTR 0x5570747272747055
 int
 dcerpc_encode_ptr(struct dcerpc_context *dce, struct dcerpc_pdu *pdu,
                   struct smb2_iovec *iov,
@@ -545,11 +542,10 @@ dcerpc_encode_ptr(struct dcerpc_context *dce, struct dcerpc_pdu *pdu,
                         return offset;
                 }
                 
-                pdu->ptr_id++;
-                offset = dcerpc_encode_3264(dce, pdu, iov, offset, pdu->ptr_id);
+                offset = dcerpc_encode_3264(dce, pdu, iov, offset, RPTR);
                 dcerpc_add_deferred_pointer(dce, pdu, coder, ptr);
                 break;
-        case PTR_UNIQUE:
+        case PTR_FULL:
                 if (ptr == NULL) {
                         offset = dcerpc_encode_3264(dce, pdu, iov, offset, 0);
                         return offset;
@@ -557,6 +553,21 @@ dcerpc_encode_ptr(struct dcerpc_context *dce, struct dcerpc_pdu *pdu,
                 
                 pdu->ptr_id++;
                 offset = dcerpc_encode_3264(dce, pdu, iov, offset, pdu->ptr_id);
+                if (pdu->top_level) {
+                        pdu->top_level = 0;
+                        offset = coder(dce, pdu, iov, offset, ptr);
+                        pdu->top_level = top_level;
+                } else {
+                        dcerpc_add_deferred_pointer(dce, pdu, coder, ptr);
+                }
+                break;
+        case PTR_UNIQUE:
+                if (ptr == NULL) {
+                        offset = dcerpc_encode_3264(dce, pdu, iov, offset, 0);
+                        return offset;
+                }
+
+                offset = dcerpc_encode_3264(dce, pdu, iov, offset, UPTR);
                 if (pdu->top_level) {
                         pdu->top_level = 0;
                         offset = coder(dce, pdu, iov, offset, ptr);
@@ -613,6 +624,9 @@ dcerpc_decode_ptr(struct dcerpc_context *dce, struct dcerpc_pdu *pdu,
                 } else {
                         dcerpc_add_deferred_pointer(dce, pdu, coder, ptr);
                 }
+                break;
+        case PTR_FULL:
+                /* not implemented yet */
                 break;
         }
 
@@ -1229,8 +1243,24 @@ dcerpc_call_async(struct dcerpc_context *dce,
 }
 
 static void
-dcerpc_bind_cb(struct smb2_context *smb2, int status,
-               void *command_data, void *private_data)
+dcerpc_bind_cb(struct dcerpc_context *dce, int status,
+               void *command_data, void *cb_data)
+{
+        struct dcerpc_cb_data *data = cb_data;
+
+        if (status != SMB2_STATUS_SUCCESS) {
+                data->cb(dce, status, NULL, data->cb_data);
+                free(data);
+                return;
+        }
+
+        data->cb(dce, 0, NULL, data->cb_data);
+        free(data);
+}
+
+static void
+smb2_bind_cb(struct smb2_context *smb2, int status,
+             void *command_data, void *private_data)
 {
         struct dcerpc_pdu *pdu = private_data;
         struct dcerpc_context *dce = pdu->dce;
@@ -1298,7 +1328,7 @@ dcerpc_bind_cb(struct smb2_context *smb2, int status,
         dcerpc_free_pdu(dce, pdu);
 }
 
-int
+static int
 dcerpc_bind_async(struct dcerpc_context *dce, dcerpc_cb cb,
                   void *cb_data)
 {
@@ -1351,7 +1381,7 @@ dcerpc_bind_async(struct dcerpc_context *dce, dcerpc_cb cb,
         req.input = iov.buf;
         req.flags = SMB2_0_IOCTL_IS_FSCTL;
 
-        smb2_pdu = smb2_cmd_ioctl_async(dce->smb2, &req, dcerpc_bind_cb, pdu);
+        smb2_pdu = smb2_cmd_ioctl_async(dce->smb2, &req, smb2_bind_cb, pdu);
         if (smb2_pdu == NULL) {
                 dcerpc_free_pdu(dce, pdu);
                 return -ENOMEM;
@@ -1362,24 +1392,30 @@ dcerpc_bind_async(struct dcerpc_context *dce, dcerpc_cb cb,
 }
 
 static void
-dcerpc_open_cb(struct smb2_context *smb2, int status,
-               void *command_data, void *private_data)
+smb2_open_cb(struct smb2_context *smb2, int status,
+             void *command_data, void *private_data)
 {
-        struct dcerpc_cb_data *cb_data = private_data;
+        struct dcerpc_cb_data *data = private_data;
         struct smb2_create_reply *rep = command_data;
-        struct dcerpc_context *dce = cb_data->dce;
+        struct dcerpc_context *dce = data->dce;
 
         if (status != SMB2_STATUS_SUCCESS) {
-                cb_data->cb(dce, -nterror_to_errno(status),
-                            NULL, cb_data->cb_data);
-                free(cb_data);
+                data->cb(dce, -nterror_to_errno(status),
+                         NULL, data->cb_data);
+                free(data);
                 return;
         }
         
         memcpy(dce->file_id, rep->file_id, SMB2_FD_SIZE);
 
-        cb_data->cb(dce, 0, NULL, cb_data->cb_data);
-        free(cb_data);
+        status = dcerpc_bind_async(dce, dcerpc_bind_cb, data);
+        if (status) {
+                data->cb(dce, status, NULL, data->cb_data);
+                free(data);
+                return;
+        }
+
+        return;
 }
 
 int
@@ -1390,7 +1426,7 @@ dcerpc_open_async(struct dcerpc_context *dce, dcerpc_cb cb,
         struct smb2_pdu *pdu;
         struct dcerpc_cb_data *data;
 
-        data = malloc(sizeof(struct dcerpc_cb_data));
+        data = calloc(1, sizeof(struct dcerpc_cb_data));
         if (data == NULL) {
                 smb2_set_error(dce->smb2, "Failed to allocate dcerpc callback "
                                "data");
@@ -1420,7 +1456,7 @@ dcerpc_open_async(struct dcerpc_context *dce, dcerpc_cb cb,
         req.create_options = 0;
         req.name = dce->path;
 
-        pdu = smb2_cmd_create_async(dce->smb2, &req, dcerpc_open_cb, data);
+        pdu = smb2_cmd_create_async(dce->smb2, &req, smb2_open_cb, data);
         if (pdu == NULL) {
                 free(data);
                 return -ENOMEM;

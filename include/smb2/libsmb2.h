@@ -181,6 +181,13 @@ void smb2_set_security_mode(struct smb2_context *smb2, uint16_t security_mode);
 void smb2_set_seal(struct smb2_context *smb2, int val);
 
 /*
+ * Set whether smb2 signing should be required or not
+ * 0  : do not require signing. This is the default.
+ * !0 : require signing.
+ */
+void smb2_set_sign(struct smb2_context *smb2, int val);
+
+/*
  * Set authentication method.
  * SMB2_SEC_UNDEFINED (use KRB if available or NTLM if not)
  * SMB2_SEC_NTLMSSP
@@ -898,68 +905,6 @@ int smb2_echo_async(struct smb2_context *smb2,
  * -errno : Failure.
  */
 int smb2_echo(struct smb2_context *smb2);
-
-
-/* Low 2 bits desctibe the type */
-#define SHARE_TYPE_DISKTREE  0
-#define SHARE_TYPE_PRINTQ    1
-#define SHARE_TYPE_DEVICE    2
-#define SHARE_TYPE_IPC       3
-
-#define SHARE_TYPE_TEMPORARY 0x40000000
-#define SHARE_TYPE_HIDDEN    0x80000000
-
-struct srvsvc_netshareinfo1 {
-        const char *name;
-        uint32_t type;
-	const char *comment;
-};
-
-struct srvsvc_netsharectr1 {
-        uint32_t count;
-        struct srvsvc_netshareinfo1 *array;
-};
-
-struct srvsvc_netsharectr {
-        uint32_t level;
-        union {
-                struct srvsvc_netsharectr1 ctr1;
-        };
-};
-
-struct srvsvc_netshareenumall_req {
-        const char *server;
-        uint32_t level;
-        struct srvsvc_netsharectr *ctr;
-        uint32_t max_buffer;
-        uint32_t resume_handle;
-};
-
-struct srvsvc_netshareenumall_rep {
-        uint32_t level;
-        struct srvsvc_netsharectr *ctr;
-        uint32_t total_entries;
-        uint32_t resume_handle;
-
-        uint32_t status;
-};
-
-/*
- * Async share_enum()
- * This function only works when connected to the IPC$ share.
- *
- * Returns
- *  0     : The operation was initiated. Result of the operation will be
- *          reported through the callback function.
- * -errno : There was an error. The callback function will not be invoked.
- *
- * When the callback is invoked, status indicates the result:
- *      0 : Success. Command_data is struct srvsvc_netshareenumall_rep *
- *          This pointer must be freed using smb2_free_data().
- * -errno : An error occured.
- */
-int smb2_share_enum_async(struct smb2_context *smb2,
-                          smb2_command_cb cb, void *cb_data);
 
 #ifdef __cplusplus
 }

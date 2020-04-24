@@ -43,6 +43,7 @@ smb2_init_context
 smb2_mkdir
 smb2_mkdir_async
 smb2_share_enum_async
+smb2_share_info_async
 smb2_open
 smb2_open_async
 smb2_opendir
@@ -71,6 +72,7 @@ smb2_set_password
 smb2_set_domain
 smb2_set_workstation
 smb2_set_seal
+smb2_set_sign
 smb2_stat
 smb2_stat_async
 smb2_statvfs
