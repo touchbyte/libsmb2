@@ -2,7 +2,7 @@
 set -e
 
 usage () {
-  echo "Usage: [VARIABLE...] $(basename $0) architecture"
+  echo "HHUsage: [VARIABLE...] $(basename $0) architecture"
   echo ""
   echo "  architecture   Target architecture. [armv7|armv7s|arm64|i386|x86_64]"
   echo ""
@@ -94,17 +94,34 @@ export CXX=$(xcrun --sdk $SDK --find g++)
 export LD=$(xcrun --sdk $SDK --find ld)
 
 # Flags
-export CFLAGS="$CFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include -miphoneos-version-min=9.0"
-export CPPFLAGS="$CPPFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include -miphoneos-version-min=9.0"
-export CXXFLAGS="$CXXFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include"
-export LDFLAGS="$LDFLAGS -arch $ARCH -isysroot $SDKROOT -L$PREFIX/lib"
-export PKG_CONFIG_PATH="$PKG_CONFIG_PATH":"$SDKROOT/usr/lib/pkgconfig":"$PREFIX/lib/pkgconfig"
-
+if [ -z "$TARGET" ]
+	then
+  export CFLAGS="$CFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include -miphoneos-version-min=9.0"
+  export CPPFLAGS="$CPPFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include -miphoneos-version-min=9.0"
+  export CXXFLAGS="$CXXFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include"
+  export LDFLAGS="$LDFLAGS -arch $ARCH -isysroot $SDKROOT -L$PREFIX/lib"
+  export PKG_CONFIG_PATH="$PKG_CONFIG_PATH":"$SDKROOT/usr/lib/pkgconfig":"$PREFIX/lib/pkgconfig"
 # Remove script parameters
 shift 1
-
 # Run configure
 ./configure \
 	--prefix="$INSTALL_DIR" \
 	--host="$CHOST" \
 	$@
+  else
+  export CFLAGS="$CFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include  -target ${TARGET}"
+  export CPPFLAGS="$CPPFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include -target ${TARGET}"
+  export CXXFLAGS="$CXXFLAGS -arch $ARCH -isysroot $SDKROOT -I$PREFIX/include -target ${TARGET}"
+  export LDFLAGS="$LDFLAGS -arch $ARCH -isysroot $SDKROOT -L$PREFIX/lib"
+  export PKG_CONFIG_PATH="$PKG_CONFIG_PATH":"$SDKROOT/usr/lib/pkgconfig":"$PREFIX/lib/pkgconfig"
+  # Remove script parameters
+shift 1
+# Run configure
+./configure \
+	--prefix="$INSTALL_DIR" \
+	--host="$CHOST" \
+  --enable-shared \
+	$@
+  fi
+
+
